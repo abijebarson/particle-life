@@ -1,17 +1,21 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 const DEFAULT_SETTINGS = {
-  numParticles: 3000,
+  numParticles: 1000,
   numTypes: 3,
-  particleSize: 4,
+  particleSize: 1,
   attractForce: '1/x^2',
   repelForce: '1/x',
-  friction: 0.05,
+  friction: 0.2,
   inertia: 4.0,
   maxDistance: 120,
   forceMultiplier: 40,
   glowEffect: true,
-  predatorPreyEnabled: false
+  predatorPreyEnabled: false,
+  particleTrails: true,
+  trailFade: 0.2,
+  joinTrails: true,
+  playMusic: false
 };
 
 const calculateForceValue = (type, d) => {
@@ -47,6 +51,7 @@ const generatePredatorMatrix = (size) => {
 export default function App() {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
+  const audioRef = useRef(null);
 
   useEffect(() => {
     if (!document.getElementById('tailwind-cdn')) {
@@ -68,6 +73,10 @@ export default function App() {
   const [forceMultiplier, setForceMultiplier] = useState(DEFAULT_SETTINGS.forceMultiplier);
   const [glowEffect, setGlowEffect] = useState(DEFAULT_SETTINGS.glowEffect);
   const [predatorPreyEnabled, setPredatorPreyEnabled] = useState(DEFAULT_SETTINGS.predatorPreyEnabled);
+  const [particleTrails, setParticleTrails] = useState(DEFAULT_SETTINGS.particleTrails);
+  const [trailFade, setTrailFade] = useState(DEFAULT_SETTINGS.trailFade);
+  const [joinTrails, setJoinTrails] = useState(DEFAULT_SETTINGS.joinTrails);
+  const [playMusic, setPlayMusic] = useState(DEFAULT_SETTINGS.playMusic);
   
   const [attractMatrix, setAttractMatrix] = useState([]);
   const [repelMatrix, setRepelMatrix] = useState([]);
@@ -75,7 +84,7 @@ export default function App() {
 
   const [isRunning, setIsRunning] = useState(false);
 
-  const [showSettings, setShowSettings] = useState(typeof window !== 'undefined' ? window.innerWidth >= 768 : true);
+  const [showSettings, setShowSettings] = useState(false);
   const [showAttract, setShowAttract] = useState(false);
   const [showRepel, setShowRepel] = useState(false);
   const [showPredator, setShowPredator] = useState(false);
@@ -93,12 +102,25 @@ export default function App() {
   });
 
   const configRef = useRef({
-    attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled
+    attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled, particleTrails, trailFade, joinTrails
   });
 
   useEffect(() => {
-    configRef.current = { attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled };
-  }, [attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled]);
+    configRef.current = { attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled, particleTrails, trailFade, joinTrails };
+  }, [attractMatrix, repelMatrix, predatorMatrix, attractForce, repelForce, friction, inertia, maxDistance, forceMultiplier, particleSize, numTypes, glowEffect, predatorPreyEnabled, particleTrails, trailFade, joinTrails]);
+
+  // Audio Playback Controller
+  useEffect(() => {
+    if (!audioRef.current) return;
+    if (playMusic) {
+      audioRef.current.play().catch(e => {
+        console.warn("Music could not be played. Make sure 'assets/music.mp3' exists and user has interacted with the document.", e);
+        setPlayMusic(false);
+      });
+    } else {
+      audioRef.current.pause();
+    }
+  }, [playMusic]);
 
   const randomizeMatrices = useCallback((size) => {
     setAttractMatrix(generateRandomMatrix(size));
@@ -180,12 +202,22 @@ export default function App() {
       
       if (state.grid[index] === -1) {
         const type = Math.floor(Math.random() * numTypes);
-        const particle = { x, y, vx: 0, vy: 0, type };
+        const particle = { x, y, prevX: x, prevY: y, vx: 0, vy: 0, type };
         state.particles.push(particle);
         state.grid[index] = created; 
         created++;
       }
     }
+    
+    // Hard clear the canvas when manually resetting (Pure Black Background)
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, state.width, state.height);
+    }
+    
     draw(state.particles);
   }, [numParticles, numTypes]);
 
@@ -256,6 +288,9 @@ export default function App() {
       let oldX = Math.floor(p.x);
       let oldY = Math.floor(p.y);
       
+      p.prevX = p.x;
+      p.prevY = p.y;
+      
       let newX = Math.floor(p.x + p.vx);
       let newY = Math.floor(p.y + p.vy);
 
@@ -302,7 +337,15 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     const cfg = configRef.current;
     
-    ctx.fillStyle = '#111827'; 
+    // Reset composite operation to normal to draw background
+    ctx.globalCompositeOperation = 'source-over';
+    
+    if (cfg.particleTrails) {
+      // Pure black fading trail
+      ctx.fillStyle = `rgba(0, 0, 0, ${cfg.trailFade})`; 
+    } else {
+      ctx.fillStyle = '#000000'; 
+    }
     ctx.fillRect(0, 0, simState.current.width, simState.current.height);
 
     const pSize = cfg.particleSize;
@@ -315,6 +358,7 @@ export default function App() {
        typeColors.push(hslToRgb(t / currentTypes, 1, 0.5));
     }
 
+    // Set lighter operation for the particles to create an additive blending glow
     ctx.globalCompositeOperation = isGlow ? 'lighter' : 'source-over';
 
     for (let t = 0; t < currentTypes; t++) {
@@ -322,6 +366,9 @@ export default function App() {
       const colorString = `rgb(${r},${g},${b})`;
       
       ctx.fillStyle = colorString;
+      ctx.strokeStyle = colorString;
+      ctx.lineWidth = pSize;
+      ctx.lineCap = 'round';
       
       if (isGlow) {
         ctx.shadowBlur = pSize * 4 + 4;
@@ -335,14 +382,30 @@ export default function App() {
       for (let i = 0; i < particles.length; i++) {
         if (particles[i].type === t) {
           const p = particles[i];
-          ctx.moveTo(p.x + radius, p.y);
-          ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          if (cfg.joinTrails) {
+            if (Math.abs(p.x - p.prevX) < simState.current.width / 2 && 
+                Math.abs(p.y - p.prevY) < simState.current.height / 2) {
+              ctx.moveTo(p.prevX, p.prevY);
+              ctx.lineTo(p.x, p.y);
+            } else {
+              ctx.moveTo(p.x, p.y);
+              ctx.lineTo(p.x + 0.1, p.y); 
+            }
+          } else {
+            ctx.moveTo(p.x + radius, p.y);
+            ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          }
         }
       }
       
-      ctx.fill();
+      if (cfg.joinTrails) {
+        ctx.stroke();
+      } else {
+        ctx.fill();
+      }
     }
 
+    // Always restore state
     ctx.globalCompositeOperation = 'source-over';
     ctx.shadowBlur = 0;
   };
@@ -376,16 +439,23 @@ export default function App() {
     setIsRunning(!isRunning);
   };
 
+  const togglePanel = (panel) => {
+    setShowSettings(panel === 'settings' ? !showSettings : false);
+    setShowAttract(panel === 'attract' ? !showAttract : false);
+    setShowRepel(panel === 'repel' ? !showRepel : false);
+    setShowPredator(panel === 'predator' ? !showPredator : false);
+  };
+
   useEffect(() => {
     return () => cancelAnimationFrame(animationRef.current);
   }, []);
 
   const forceOptions = ['exp(-x)', '-log(x)', '1/x', '1/x^2', '1/x^3'];
 
-  if (attractMatrix.length === 0) return <div className="p-8 text-white">Initializing...</div>;
+  if (attractMatrix.length === 0) return <div className="p-8 text-white flex justify-center items-center h-screen bg-black">Initializing...</div>;
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-gray-950 text-gray-200 font-sans">
+    <div className="relative w-screen h-screen overflow-hidden bg-black text-gray-200 font-sans">
       <canvas 
         ref={canvasRef} 
         width={dimensions.width} 
@@ -393,117 +463,113 @@ export default function App() {
         className="absolute inset-0 z-0 bg-black cursor-crosshair"
       />
 
-      <div className="absolute top-4 left-4 right-4 md:right-auto z-20 flex flex-col gap-2 md:w-80 pointer-events-none">
-        <button 
-          onClick={() => setShowSettings(!showSettings)}
-          className="pointer-events-auto bg-gray-900/80 backdrop-blur-md border border-gray-700 p-3 rounded-xl shadow-lg font-bold flex justify-between items-center transition hover:bg-gray-800/90"
-        >
-          <span>Global Physics</span>
-          <span>{showSettings ? '▲' : '▼'}</span>
-        </button>
+      {/* Hidden audio element for music */}
+      <audio ref={audioRef} src="assets/music.mp3" loop preload="none" />
+
+      {/* Bottom Centralized Dock */}
+      <div className="absolute bottom-4 left-0 right-0 z-20 flex flex-col items-center gap-2 pointer-events-none">
         
-        {showSettings && (
-          <div className="pointer-events-auto bg-gray-900/80 backdrop-blur-md p-5 rounded-xl shadow-xl border border-gray-700 flex flex-col gap-4 max-h-[45vh] md:max-h-[80vh] overflow-y-auto custom-scrollbar overflow-x-hidden">
-            <div className="flex gap-2">
-              <button 
-                onClick={toggleSim} 
-                className={`flex-1 py-2 font-bold rounded shadow-md transition text-sm ${isRunning ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}`}
-              >
-                {isRunning ? 'Pause' : 'Play'}
-              </button>
-              <button 
-                onClick={initSimulation} 
-                className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 font-bold rounded shadow-md transition text-sm"
-              >
-                Restart
-              </button>
+        {/* Expanded Panels Container */}
+        <div className="w-auto max-w-[calc(100vw-2rem)] flex flex-col items-center">
+          
+          {/* Settings Panel */}
+          {showSettings && (
+            <div className="pointer-events-auto bg-gray-900/85 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-gray-700 flex flex-col gap-3 max-h-[60vh] overflow-y-auto custom-scrollbar w-72 md:w-80">
+              
+              <div className="grid grid-cols-2 gap-3 border-b border-gray-700 pb-3">
+                <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
+                  <input type="checkbox" checked={glowEffect} onChange={e => setGlowEffect(e.target.checked)} className="accent-blue-500 w-4 h-4 cursor-pointer" />
+                  <span>Glow</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
+                  <input type="checkbox" checked={particleTrails} onChange={e => setParticleTrails(e.target.checked)} className="accent-purple-500 w-4 h-4 cursor-pointer" />
+                  <span>Trails</span>
+                </label>
+                
+                <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
+                  <input type="checkbox" checked={predatorPreyEnabled} onChange={e => setPredatorPreyEnabled(e.target.checked)} className="accent-orange-500 w-4 h-4 cursor-pointer" />
+                  <span>Predation</span>
+                </label>
+
+                <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
+                  <input type="checkbox" checked={playMusic} onChange={e => setPlayMusic(e.target.checked)} className="accent-pink-500 w-4 h-4 cursor-pointer" />
+                  <span>Music</span>
+                </label>
+              </div>
+              
+              {particleTrails && (
+                <div className="flex flex-col gap-2 pl-3 border-l-2 border-purple-500/50 ml-1">
+                  <label className="flex items-center gap-2 text-xs text-gray-300 cursor-pointer hover:text-white transition">
+                    <input type="checkbox" checked={joinTrails} onChange={e => setJoinTrails(e.target.checked)} className="accent-purple-500 w-4 h-4 cursor-pointer" />
+                    <span>Join Trails</span>
+                  </label>
+                  <label className="flex flex-col text-xs text-gray-400">
+                    Fade Rate: <span className="text-white font-mono">{trailFade.toFixed(2)}</span>
+                    <input type="range" min="0.01" max="1.0" step="0.01" value={trailFade} onChange={e => setTrailFade(Number(e.target.value))} className="mt-1 accent-purple-500" />
+                  </label>
+                </div>
+              )}
+              
+              <label className="flex flex-col text-xs text-gray-400 mt-1">
+                Particles (N): <span className="text-white font-mono">{numParticles}</span>
+                <input type="range" min="100" max="15000" step="100" value={numParticles} onChange={e => setNumParticles(Number(e.target.value))} className="mt-1 accent-blue-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Types (M): <span className="text-white font-mono">{numTypes}</span>
+                <input type="range" min="1" max="8" value={numTypes} onChange={handleTypeChange} className="mt-1 accent-blue-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Particle Size: <span className="text-white font-mono">{particleSize}px</span>
+                <input type="range" min="1" max="8" step="1" value={particleSize} onChange={e => setParticleSize(Number(e.target.value))} className="mt-1 accent-yellow-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Interaction Radius: <span className="text-white font-mono">{maxDistance}px</span>
+                <input type="range" min="10" max="300" value={maxDistance} onChange={e => setMaxDistance(Number(e.target.value))} className="mt-1 accent-purple-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Inertia (Mass): <span className="text-white font-mono">{inertia.toFixed(1)}</span>
+                <input type="range" min="0.1" max="10" step="0.1" value={inertia} onChange={e => setInertia(Number(e.target.value))} className="mt-1 accent-orange-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Friction: <span className="text-white font-mono">{friction.toFixed(2)}</span>
+                <input type="range" min="0" max="0.99" step="0.01" value={friction} onChange={e => setFriction(Number(e.target.value))} className="mt-1 accent-purple-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Force Multiplier: <span className="text-white font-mono">{forceMultiplier}</span>
+                <input type="range" min="1" max="50" step="1" value={forceMultiplier} onChange={e => setForceMultiplier(Number(e.target.value))} className="mt-1 accent-pink-500" />
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Attraction Law:
+                <select value={attractForce} onChange={e => setAttractForce(e.target.value)} className="mt-1 bg-gray-800 text-white p-1.5 rounded border border-gray-700 outline-none text-xs">
+                  {forceOptions.map(f => <option key={`a-${f}`} value={f}>{f}</option>)}
+                </select>
+              </label>
+
+              <label className="flex flex-col text-xs text-gray-400">
+                Repulsion Law:
+                <select value={repelForce} onChange={e => setRepelForce(e.target.value)} className="mt-1 bg-gray-800 text-white p-1.5 rounded border border-gray-700 outline-none text-xs">
+                  {forceOptions.map(f => <option key={`r-${f}`} value={f}>{f}</option>)}
+                </select>
+              </label>
             </div>
+          )}
 
-            <label className="flex items-center gap-2 text-sm text-gray-400 mt-2 cursor-pointer">
-              <input type="checkbox" checked={glowEffect} onChange={e => setGlowEffect(e.target.checked)} className="accent-blue-500 w-4 h-4 cursor-pointer" />
-              <span className="text-white font-semibold">Enable Visual Glow</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm text-gray-400 cursor-pointer">
-              <input type="checkbox" checked={predatorPreyEnabled} onChange={e => setPredatorPreyEnabled(e.target.checked)} className="accent-orange-500 w-4 h-4 cursor-pointer" />
-              <span className="text-white font-semibold">Enable Predator / Prey</span>
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Particles (N): <span className="text-white font-mono">{numParticles}</span>
-              <input type="range" min="100" max="15000" step="100" value={numParticles} onChange={e => setNumParticles(Number(e.target.value))} className="mt-1 accent-blue-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Types (M): <span className="text-white font-mono">{numTypes}</span>
-              <input type="range" min="1" max="8" value={numTypes} onChange={handleTypeChange} className="mt-1 accent-blue-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Particle Size: <span className="text-white font-mono">{particleSize}px</span>
-              <input type="range" min="1" max="8" step="1" value={particleSize} onChange={e => setParticleSize(Number(e.target.value))} className="mt-1 accent-yellow-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Interaction Radius: <span className="text-white font-mono">{maxDistance}px</span>
-              <input type="range" min="10" max="300" value={maxDistance} onChange={e => setMaxDistance(Number(e.target.value))} className="mt-1 accent-purple-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Inertia (Mass): <span className="text-white font-mono">{inertia.toFixed(1)}</span>
-              <input type="range" min="0.1" max="10" step="0.1" value={inertia} onChange={e => setInertia(Number(e.target.value))} className="mt-1 accent-orange-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Friction: <span className="text-white font-mono">{friction.toFixed(2)}</span>
-              <input type="range" min="0" max="0.99" step="0.01" value={friction} onChange={e => setFriction(Number(e.target.value))} className="mt-1 accent-purple-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Force Multiplier: <span className="text-white font-mono">{forceMultiplier}</span>
-              <input type="range" min="1" max="50" step="1" value={forceMultiplier} onChange={e => setForceMultiplier(Number(e.target.value))} className="mt-1 accent-pink-500" />
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Attraction Law:
-              <select value={attractForce} onChange={e => setAttractForce(e.target.value)} className="mt-1 bg-gray-800 text-white p-2 rounded border border-gray-700 outline-none text-xs">
-                {forceOptions.map(f => <option key={`a-${f}`} value={f}>{f}</option>)}
-              </select>
-            </label>
-
-            <label className="flex flex-col text-sm text-gray-400">
-              Repulsion Law:
-              <select value={repelForce} onChange={e => setRepelForce(e.target.value)} className="mt-1 bg-gray-800 text-white p-2 rounded border border-gray-700 outline-none text-xs">
-                {forceOptions.map(f => <option key={`r-${f}`} value={f}>{f}</option>)}
-              </select>
-            </label>
-          </div>
-        )}
-      </div>
-
-      <div className="absolute bottom-4 md:bottom-auto md:top-4 left-4 right-4 md:left-auto md:w-auto md:min-w-[300px] z-10 flex flex-col gap-2 pointer-events-none">
-        
-        <div className="flex justify-end pointer-events-auto">
-          <button 
-            onClick={() => randomizeMatrices(numTypes)} 
-            className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-4 py-2 rounded-xl shadow-lg border border-gray-700 transition text-sm w-full md:w-auto"
-          >
-            Shuffle All Matrices
-          </button>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <button 
-            onClick={() => setShowAttract(!showAttract)}
-            className="pointer-events-auto bg-gray-900/80 backdrop-blur-md border border-gray-700 p-3 rounded-xl shadow-lg font-bold flex justify-between items-center transition hover:bg-gray-800/90 text-green-400"
-          >
-            <span>Attraction Matrix</span>
-            <span className="ml-4">{showAttract ? '▲' : '▼'}</span>
-          </button>
+          {/* Attraction Panel */}
           {showAttract && (
-            <div className="pointer-events-auto bg-gray-900/80 backdrop-blur-md p-4 rounded-xl shadow-xl border border-gray-700 max-h-[35vh] md:max-h-[40vh] overflow-y-auto overflow-x-auto custom-scrollbar">
-              <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
-                <div className="w-4 h-4"></div> 
+            <div className="pointer-events-auto bg-gray-900/85 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-gray-700 max-h-[50vh] overflow-y-auto overflow-x-auto custom-scrollbar w-auto">
+              <div className="text-xs text-green-400 mb-3 font-bold uppercase tracking-wider text-center flex justify-center items-center gap-1">
+                <span>🧲</span> Attraction Matrix
+              </div>
+              <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
+                <div className="w-3 h-3"></div> 
                 {Array.from({ length: numTypes }).map((_, j) => (
                   <div key={`col-hdr-${j}`} className="flex justify-center pb-1">
                     <div className="w-3 h-3 rounded-full border border-gray-600 shadow-sm" style={{ backgroundColor: `hsl(${(j / numTypes) * 360}, 100%, 50%)` }}></div>
@@ -531,20 +597,15 @@ export default function App() {
               </div>
             </div>
           )}
-        </div>
 
-        <div className="flex flex-col gap-2">
-          <button 
-            onClick={() => setShowRepel(!showRepel)}
-            className="pointer-events-auto bg-gray-900/80 backdrop-blur-md border border-gray-700 p-3 rounded-xl shadow-lg font-bold flex justify-between items-center transition hover:bg-gray-800/90 text-red-400"
-          >
-            <span>Repulsion Matrix</span>
-            <span className="ml-4">{showRepel ? '▲' : '▼'}</span>
-          </button>
+          {/* Repulsion Panel */}
           {showRepel && (
-            <div className="pointer-events-auto bg-gray-900/80 backdrop-blur-md p-4 rounded-xl shadow-xl border border-gray-700 max-h-[35vh] md:max-h-[40vh] overflow-y-auto overflow-x-auto custom-scrollbar">
-              <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
-                <div className="w-4 h-4"></div> 
+            <div className="pointer-events-auto bg-gray-900/85 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-gray-700 max-h-[50vh] overflow-y-auto overflow-x-auto custom-scrollbar w-auto">
+              <div className="text-xs text-red-400 mb-3 font-bold uppercase tracking-wider text-center flex justify-center items-center gap-1">
+                <span>🛡️</span> Repulsion Matrix
+              </div>
+              <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
+                <div className="w-3 h-3"></div> 
                 {Array.from({ length: numTypes }).map((_, j) => (
                   <div key={`col-hdr-${j}`} className="flex justify-center pb-1">
                     <div className="w-3 h-3 rounded-full border border-gray-600 shadow-sm" style={{ backgroundColor: `hsl(${(j / numTypes) * 360}, 100%, 50%)` }}></div>
@@ -572,21 +633,16 @@ export default function App() {
               </div>
             </div>
           )}
-        </div>
 
-        <div className="flex flex-col gap-2">
-          <button 
-            onClick={() => setShowPredator(!showPredator)}
-            className="pointer-events-auto bg-gray-900/80 backdrop-blur-md border border-gray-700 p-3 rounded-xl shadow-lg font-bold flex justify-between items-center transition hover:bg-gray-800/90 text-amber-400"
-          >
-            <span>Predation Matrix</span>
-            <span className="ml-4">{showPredator ? '▲' : '▼'}</span>
-          </button>
+          {/* Predation Panel */}
           {showPredator && (
-            <div className="pointer-events-auto bg-gray-900/80 backdrop-blur-md p-4 rounded-xl shadow-xl border border-gray-700 max-h-[35vh] md:max-h-[40vh] overflow-y-auto overflow-x-auto custom-scrollbar">
-              <div className="text-xs text-gray-400 mb-3 text-center">1 = Row eats Col, -1 = Row is eaten</div>
-              <div className="grid gap-2 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
-                <div className="w-4 h-4"></div> 
+            <div className="pointer-events-auto bg-gray-900/85 backdrop-blur-md p-4 rounded-2xl shadow-2xl border border-gray-700 max-h-[50vh] overflow-y-auto overflow-x-auto custom-scrollbar w-auto">
+              <div className="text-xs text-amber-400 mb-1 font-bold uppercase tracking-wider text-center flex justify-center items-center gap-1">
+                <span>🦖</span> Predation Matrix
+              </div>
+              <div className="text-[10px] text-gray-400 mb-3 text-center">1 = Row eats Col, -1 = Row is eaten</div>
+              <div className="grid gap-1.5 items-center" style={{ gridTemplateColumns: `auto repeat(${numTypes}, minmax(0, 1fr))` }}>
+                <div className="w-3 h-3"></div> 
                 {Array.from({ length: numTypes }).map((_, j) => (
                   <div key={`col-hdr-${j}`} className="flex justify-center pb-1">
                     <div className="w-3 h-3 rounded-full border border-gray-600 shadow-sm" style={{ backgroundColor: `hsl(${(j / numTypes) * 360}, 100%, 50%)` }}></div>
@@ -616,12 +672,79 @@ export default function App() {
               </div>
             </div>
           )}
+
+        </div>
+
+        {/* Unified Bottom Row separated into distinct sections */}
+        <div className="flex flex-row gap-2 md:gap-4 mb-2 pointer-events-none">
+          
+          {/* Playback Controls Section */}
+          <div className="flex flex-row gap-1.5 pointer-events-auto bg-gray-900/60 backdrop-blur-lg p-2 rounded-2xl shadow-2xl border border-gray-700 items-center justify-center">
+            <button 
+              onClick={toggleSim} 
+              title={isRunning ? 'Pause' : 'Play'}
+              className={`w-10 h-10 flex justify-center items-center font-bold rounded-xl shadow-inner transition text-lg ${isRunning ? 'bg-red-600/90 hover:bg-red-500 text-white' : 'bg-green-600/90 hover:bg-green-500 text-white'}`}
+            >
+              {isRunning ? '⏸' : '▶'}
+            </button>
+            <button 
+              onClick={initSimulation} 
+              title="Restart"
+              className="w-10 h-10 flex justify-center items-center bg-blue-600/90 hover:bg-blue-500 text-white font-bold rounded-xl shadow-inner transition text-xl"
+            >
+              ↺
+            </button>
+          </div>
+
+          {/* Toggle Menus Section */}
+          <div className="flex flex-row gap-1.5 pointer-events-auto bg-gray-900/60 backdrop-blur-lg p-2 rounded-2xl shadow-2xl border border-gray-700 items-center justify-center">
+            <button 
+              onClick={() => togglePanel('settings')}
+              title="Physics Settings"
+              className={`w-10 h-10 flex justify-center items-center rounded-xl shadow-inner font-bold transition text-lg border ${showSettings ? 'bg-gray-800 border-blue-500 text-blue-400' : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-blue-400 hover:text-blue-400'}`}
+            >
+              ⚙️
+            </button>
+            <button 
+              onClick={() => togglePanel('attract')}
+              title="Attraction Matrix"
+              className={`w-10 h-10 flex justify-center items-center rounded-xl shadow-inner font-bold transition text-lg border ${showAttract ? 'bg-gray-800 border-green-500 text-green-400' : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-green-400 hover:text-green-400'}`}
+            >
+              🧲
+            </button>
+            <button 
+              onClick={() => togglePanel('repel')}
+              title="Repulsion Matrix"
+              className={`w-10 h-10 flex justify-center items-center rounded-xl shadow-inner font-bold transition text-lg border ${showRepel ? 'bg-gray-800 border-red-500 text-red-400' : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-red-400 hover:text-red-400'}`}
+            >
+              🛡️
+            </button>
+            <button 
+              onClick={() => togglePanel('predator')}
+              title="Predation Matrix"
+              className={`w-10 h-10 flex justify-center items-center rounded-xl shadow-inner font-bold transition text-lg border ${showPredator ? 'bg-gray-800 border-amber-500 text-amber-400' : 'bg-gray-800/50 border-gray-600 text-gray-300 hover:border-amber-400 hover:text-amber-400'}`}
+            >
+              🦖
+            </button>
+          </div>
+
+          {/* Shuffle Section (Moved to the right) */}
+          <div className="flex flex-row gap-1.5 pointer-events-auto bg-gray-900/60 backdrop-blur-lg p-2 rounded-2xl shadow-2xl border border-gray-700 items-center justify-center">
+            <button 
+              onClick={() => randomizeMatrices(numTypes)} 
+              title="Shuffle Matrices"
+              className="w-10 h-10 flex justify-center items-center bg-purple-600/90 hover:bg-purple-500 text-white font-bold rounded-xl shadow-inner transition text-xl"
+            >
+              🔀
+            </button>
+          </div>
+
         </div>
 
       </div>
       
       <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
